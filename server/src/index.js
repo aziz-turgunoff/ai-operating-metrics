@@ -1,24 +1,8 @@
-import express from "express";
-import cors from "cors";
-import "dotenv/config";
-import { metricsRouter } from "./routes/metrics.js";
-import { snapshotRouter } from "./routes/snapshot.js";
-import { historyRouter } from "./routes/history.js";
-import { monthsRouter } from "./routes/months.js";
-import { debugRouter } from "./routes/debug.js";
+// Local dev entry only. Production (Vercel) uses api/index.js instead —
+// serverless functions can't keep a node-cron timer alive between requests,
+// so that path relies on a Vercel Cron Job hitting /api/cron/snapshot instead.
+import { app } from "./app.js";
 import { startScheduler } from "./scheduler.js";
-
-const app = express();
-app.use(cors());
-app.use(express.json());
-
-app.use(metricsRouter);
-app.use(snapshotRouter);
-app.use(historyRouter);
-app.use(monthsRouter);
-app.use(debugRouter);
-
-app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
 startScheduler();
 

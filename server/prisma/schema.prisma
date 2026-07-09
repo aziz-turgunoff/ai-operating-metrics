@@ -1,16 +1,20 @@
-// Local dev uses SQLite (zero setup). To move to Postgres for production:
-// 1. change provider to "postgresql" below
-// 2. set DATABASE_URL to a Postgres connection string
-// 3. run `npm run db:migrate -w server`
-// Field types here (String/Int/Float/DateTime/Boolean, JSON-as-String) are
-// intentionally portable across both providers — no SQLite-only features used.
+// Moved from local SQLite to a hosted Postgres (Neon, via Vercel's
+// marketplace integration) on 2026-07-11 so serverless functions on Vercel
+// have a real persistent DB — a SQLite file doesn't survive between
+// stateless function invocations. Local dev points DATABASE_URL at the same
+// Neon instance (see server/.env); no separate local DB needed.
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  // Pooled connection for runtime queries (serverless functions open/close a
+  // connection per invocation, so pooling matters). Migrations use the direct
+  // (unpooled) URL instead — Neon's PgBouncer-style pooler doesn't reliably
+  // support the advisory locks Prisma's migration engine needs.
+  url       = env("DATABASE_URL")
+  directUrl = env("DATABASE_URL_UNPOOLED")
 }
 
 // One row per snapshot run (manual or monthly cron). Keeps the raw payload
