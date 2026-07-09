@@ -27,6 +27,16 @@ function extractJson(text) {
   return JSON.parse(candidate.trim());
 }
 
+// Parsing successfully isn't the same as being USEFUL — if leadbank_bi/apollo
+// tools return nothing, every field is null and this source is contributing
+// zero data to any metric. status:"fallback" should mean "standing in with a
+// real number," not "produced valid-but-empty JSON."
+function allValuesNull(value) {
+  if (value === null || value === undefined) return true;
+  if (typeof value !== "object") return false;
+  return Object.values(value).every(allValuesNull);
+}
+
 export async function companyai() {
   if (!process.env.OPENWEBUI_TOKEN || !process.env.OPENWEBUI_URL) {
     return { status: "pending", note: "OPENWEBUI_URL / OPENWEBUI_TOKEN not set" };
@@ -60,6 +70,13 @@ export async function companyai() {
 
     try {
       const parsed = extractJson(content);
+      if (allValuesNull(parsed)) {
+        return {
+          status: "degraded",
+          data: parsed,
+          note: "Parsed successfully but every field is null — leadbank_bi/apollo tools aren't returning data (confirmed 2026-07-10: fails in manual chat too, not just headless, so this is an upstream tool/backend issue, not a connector bug)",
+        };
+      }
       return {
         status: "fallback",
         data: parsed,
