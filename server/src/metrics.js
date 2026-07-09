@@ -66,9 +66,18 @@ export function buildReport(results) {
       metrics: [
         { label: "Active users", source: "openwebui", value: pick(ow, ["activeUsers"]) },
         { label: "Interactions (msgs)", source: "openwebui", value: pick(ow, ["messages"]) },
-        { label: "Tokens processed", source: "openrouter", value: pick(or_, ["tokens"]) },
-        { label: "Total spend", unit: "$", source: "openrouter", value: pick(or_, ["spend"]) },
-        { label: "Requests", source: "openrouter", value: pick(or_, ["requests"]) },
+        {
+          label: "Tokens processed", source: "openrouter", value: pick(or_, ["tokens"]),
+          note: or_?.analyticsStatus === "pending" ? "Needs OPENROUTER_MGMT_KEY for per-model analytics" : or_?.analyticsStatus === "error" ? "Activity fetch failed — see server log" : null,
+        },
+        {
+          label: "Total spend", unit: "$", source: "openrouter", value: pick(or_, ["spend"]),
+          note: or_?.analyticsStatus === "pending" ? "Lifetime usage on this key (/auth/key), not month-to-date — add OPENROUTER_MGMT_KEY for a real monthly figure" : or_?.analyticsStatus === "live" ? "Rolling 30-day window, not calendar month — excludes current UTC day" : null,
+        },
+        {
+          label: "Requests", source: "openrouter", value: pick(or_, ["requests"]),
+          note: or_?.analyticsStatus === "pending" ? "Needs OPENROUTER_MGMT_KEY for per-model analytics" : null,
+        },
         {
           label: "Depts using AI", source: "openwebui", value: null,
           note: "Open WebUI has no department field — would need a per-user-to-dept mapping elsewhere",

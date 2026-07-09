@@ -9,3 +9,4 @@ server/prisma/dev.db-journal
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
 *.log
+open-router.txt

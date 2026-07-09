@@ -4,6 +4,7 @@ import "dotenv/config";
 import { metricsRouter } from "./routes/metrics.js";
 import { snapshotRouter } from "./routes/snapshot.js";
 import { historyRouter } from "./routes/history.js";
+import { debugRouter } from "./routes/debug.js";
 import { startScheduler } from "./scheduler.js";
 
 const app = express();
@@ -13,6 +14,7 @@ app.use(express.json());
 app.use(metricsRouter);
 app.use(snapshotRouter);
 app.use(historyRouter);
+app.use(debugRouter);
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 

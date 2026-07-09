@@ -1,31 +1,30 @@
-// LLM gateway usage: tokens, spend, requests, per-model + per-app breakdown.
-// Field names below are best-guess against OpenRouter's Activity export shape
-// (date, model, usage, requests, prompt_tokens, completion_tokens) — the
-// normalizer is deliberately defensive (multiple candidate keys) so it degrades
-// to nulls instead of throwing if the real shape differs once a key is set.
+// LLM gateway usage: split across two OpenRouter keys.
+// - OPENROUTER_KEY      -> GET /api/v1/auth/key  (per-key totals + credit balance; any key works)
+// - OPENROUTER_MGMT_KEY -> GET /api/v1/activity   (per-model daily activity; ORG MANAGEMENT KEY REQUIRED)
+//
+// /activity returns daily rows for the last 30 COMPLETED UTC days — a rolling
+// window, NOT the calendar month, and it excludes the current UTC day. We sum
+// whatever it returns and surface that as a caveat rather than pretend it's
+// month-to-date.
 import { fetchWithTimeout } from "../lib/fetchWithTimeout.js";
 import { num, pick } from "../lib/normalize.js";
 
-function rowsOf(json) {
-  return Array.isArray(json) ? json : pick(json, ["data", "rows", "activity"]) ?? [];
+function normalizeAuthKey(json) {
+  const usage = num(pick(json, ["data.usage", "usage"]));
+  const limit = num(pick(json, ["data.limit", "limit"]));
+  return {
+    usage,
+    limit,
+    creditBalance: usage != null && limit != null ? limit - usage : null,
+  };
 }
 
-function inCurrentMonth(row) {
-  const month = new Date().toISOString().slice(0, 7);
-  const date = pick(row, ["date", "created_at", "day"]);
-  return typeof date === "string" && date.startsWith(month);
-}
-
-function normalize(json) {
-  const all = rowsOf(json);
-  const rows = all.filter(inCurrentMonth);
-  const scoped = rows.length ? rows : all; // fall back to whatever the API already scoped for us
-
+function normalizeActivity(json) {
+  const rows = Array.isArray(json) ? json : pick(json, ["data", "rows", "activity"]) ?? [];
   let tokens = 0, spend = 0, requests = 0;
   const byModel = new Map();
-  const byApp = new Map();
 
-  for (const row of scoped) {
+  for (const row of rows) {
     const promptTok = num(pick(row, ["prompt_tokens"])) ?? 0;
     const completionTok = num(pick(row, ["completion_tokens"])) ?? 0;
     const rowTokens = num(pick(row, ["tokens", "total_tokens"])) ?? promptTok + completionTok;
@@ -38,32 +37,77 @@ function normalize(json) {
 
     const model = pick(row, ["model", "model_permaslug"]);
     if (model) byModel.set(model, (byModel.get(model) ?? 0) + rowTokens);
-
-    const app = pick(row, ["app", "app_id", "title", "referer"]);
-    if (app) byApp.set(app, (byApp.get(app) ?? 0) + rowTokens);
   }
 
   return {
     tokens, spend, requests,
     byModel: [...byModel.entries()].map(([model, tokens]) => ({ model, tokens })),
-    byApp: [...byApp.entries()].map(([app, tokens]) => ({ app, tokens })),
+    rowCount: rows.length,
   };
 }
 
 export async function openrouter() {
   if (!process.env.OPENROUTER_KEY) return { status: "pending", note: "OPENROUTER_KEY not set" };
+
+  let authTotals;
   try {
-    const r = await fetchWithTimeout("https://openrouter.ai/api/v1/activity", {
+    const r = await fetchWithTimeout("https://openrouter.ai/api/v1/auth/key", {
       headers: { Authorization: `Bearer ${process.env.OPENROUTER_KEY}` },
     });
-    if (!r.ok) return { status: "error", error: `HTTP ${r.status}` };
-    const json = await r.json();
-    return {
-      status: "live",
-      data: normalize(json),
-      note: "Field mapping is best-guess against OpenRouter's documented Activity shape — confirm against a real response and adjust normalize() in this file if field names differ",
-    };
+    if (!r.ok) return { status: "error", error: `HTTP ${r.status} from /auth/key` };
+    authTotals = normalizeAuthKey(await r.json());
   } catch (e) {
     return { status: "error", error: String(e) };
+  }
+
+  if (!process.env.OPENROUTER_MGMT_KEY) {
+    return {
+      status: "live",
+      data: {
+        usage: authTotals.usage,
+        limit: authTotals.limit,
+        creditBalance: authTotals.creditBalance,
+        spend: authTotals.usage, // best spend figure available without a management key
+        tokens: null,
+        requests: null,
+        byModel: [],
+        analyticsStatus: "pending",
+      },
+      note: "Per-model breakdown pending: management key needed for analytics. \"Total spend\" here is lifetime usage on this key from /auth/key, not month-to-date.",
+    };
+  }
+
+  try {
+    const r = await fetchWithTimeout("https://openrouter.ai/api/v1/activity", {
+      headers: { Authorization: `Bearer ${process.env.OPENROUTER_MGMT_KEY}` },
+    });
+    if (!r.ok) {
+      return {
+        status: "live",
+        data: { ...authTotals, spend: authTotals.usage, tokens: null, requests: null, byModel: [], analyticsStatus: "error" },
+        note: `Activity fetch failed (HTTP ${r.status}) — falling back to /auth/key totals only`,
+      };
+    }
+    const activity = normalizeActivity(await r.json());
+    return {
+      status: "live",
+      data: {
+        usage: authTotals.usage,
+        limit: authTotals.limit,
+        creditBalance: authTotals.creditBalance,
+        tokens: activity.tokens,
+        spend: activity.spend,
+        requests: activity.requests,
+        byModel: activity.byModel,
+        analyticsStatus: "live",
+      },
+      note: "Rolling 30-day window from /activity, not the calendar month — and it excludes the current UTC day",
+    };
+  } catch (e) {
+    return {
+      status: "live",
+      data: { ...authTotals, spend: authTotals.usage, tokens: null, requests: null, byModel: [], analyticsStatus: "error" },
+      note: `Activity fetch failed (${String(e)}) — falling back to /auth/key totals only`,
+    };
   }
 }
