@@ -29,6 +29,8 @@ const TOKENS = {
     pendingBg: "rgba(224,166,61,0.07)",
     error: "#E05B5B",
     errorBg: "rgba(224,91,91,0.08)",
+    fallback: "#B18AF0",
+    fallbackBg: "rgba(177,138,240,0.10)",
     accent: "#5B8DEF",
   },
   light: {
@@ -44,6 +46,8 @@ const TOKENS = {
     pendingBg: "rgba(169,114,15,0.10)",
     error: "#C23B3B",
     errorBg: "rgba(194,59,59,0.08)",
+    fallback: "#7B4FD1",
+    fallbackBg: "rgba(123,79,209,0.09)",
     accent: "#3B63D6",
   },
 };
@@ -56,6 +60,8 @@ function statusMeta(T, status) {
   if (status === "live") return { dot: T.live, bg: T.liveBg, text: "LIVE" };
   if (status === "pending") return { dot: T.pending, bg: T.pendingBg, text: "PENDING" };
   if (status === "error") return { dot: T.error, bg: T.errorBg, text: "ERROR" };
+  if (status === "fallback") return { dot: T.fallback, bg: T.fallbackBg, text: "AI FALLBACK" };
+  if (status === "degraded") return { dot: T.error, bg: T.errorBg, text: "DEGRADED" };
   return { dot: T.inkFaint, bg: "transparent", text: "MOCK" };
 }
 
@@ -142,18 +148,32 @@ function NorthStarCard({ T, m, src }) {
 function MetricRow({ T, m, src }) {
   const meta = statusMeta(T, src?.status ?? "mock");
   const empty = m.value === null || m.value === undefined;
+  const isFallback = src?.status === "fallback";
   return (
     <div style={{
       display: "flex", alignItems: "center", justifyContent: "space-between",
       padding: "10px 14px", borderTop: `1px solid ${T.panelEdge}`,
       opacity: empty && src?.status === "pending" ? 0.72 : 1,
+      background: isFallback ? T.fallbackBg : "transparent",
     }}>
       <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
         <span style={{ color: T.ink, fontSize: 13.5 }}>{m.label}</span>
-        {m.note && <span style={{ color: T.inkFaint, fontSize: 11 }}>{m.note}</span>}
+        {m.note && <span style={{ color: isFallback ? T.fallback : T.inkFaint, fontSize: 11 }}>{m.note}</span>}
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <span style={{ fontFamily: FONTS.mono, fontSize: 15, color: empty ? T.inkFaint : T.ink, minWidth: 64, textAlign: "right" }}>
+        {isFallback && (
+          <span style={{
+            fontFamily: FONTS.mono, fontSize: 9, color: T.fallback, border: `1px solid ${T.fallback}`,
+            borderRadius: 4, padding: "1px 4px", letterSpacing: 0.5,
+          }}>
+            AI EST.
+          </span>
+        )}
+        <span style={{
+          fontFamily: FONTS.mono, fontSize: 15, minWidth: 64, textAlign: "right",
+          color: empty ? T.inkFaint : (isFallback ? T.fallback : T.ink),
+          fontStyle: isFallback ? "italic" : "normal",
+        }}>
           {fmt(m.value, m.unit)}
         </span>
         <span title={whyTitle(src)} style={{ width: 7, height: 7, borderRadius: 99, background: meta.dot, flexShrink: 0, cursor: "help" }} />
@@ -211,12 +231,16 @@ export default function AIOperatingMetrics() {
   const sourceOf = (key) => ({ ...sourcesMeta[key], ...sources[key] });
 
   const counts = useMemo(() => {
-    let live = 0, pending = 0, error = 0;
+    let live = 0, pending = 0, error = 0, fallback = 0, degraded = 0;
     Object.keys(sourcesMeta).forEach((k) => {
       const s = sources[k]?.status;
-      if (s === "live") live++; else if (s === "error") error++; else pending++;
+      if (s === "live") live++;
+      else if (s === "error") error++;
+      else if (s === "fallback") fallback++;
+      else if (s === "degraded") degraded++;
+      else pending++;
     });
-    return { live, pending, error, total: Object.keys(sourcesMeta).length };
+    return { live, pending, error, fallback, degraded, total: Object.keys(sourcesMeta).length };
   }, [sourcesMeta, sources]);
 
   const showCat = (metrics) => filter === "all" || metrics.some((m) => sourceOf(m.source).status === filter);
@@ -267,7 +291,8 @@ export default function AIOperatingMetrics() {
         </div>
         <p style={{ margin: "10px 0 6px", color: T.inkDim, fontSize: 13.5, maxWidth: 620 }}>
           One roll-up across every AI system. Each metric shows its source status — green is live data,
-          amber is a source still being wired in, red is a configured source whose fetch failed.
+          amber is a source still being wired in, red is a configured source whose fetch failed, purple
+          ("AI EST.") is a temporary AI-guessed number standing in until a direct connector lands.
           Hover any dot to see why.
         </p>
         {snapshotMsg && <p style={{ margin: "0 0 14px", color: T.accent, fontSize: 11.5, fontFamily: FONTS.mono }}>{snapshotMsg}</p>}
@@ -277,7 +302,9 @@ export default function AIOperatingMetrics() {
             { k: "all", label: `All sources · ${counts.total}` },
             { k: "live", label: `Live · ${counts.live}`, dot: T.live },
             { k: "pending", label: `Pending · ${counts.pending}`, dot: T.pending },
+            { k: "fallback", label: `Fallback · ${counts.fallback}`, dot: T.fallback },
             { k: "error", label: `Error · ${counts.error}`, dot: T.error },
+            { k: "degraded", label: `Degraded · ${counts.degraded}`, dot: T.error },
           ].map((b) => (
             <button key={b.k} onClick={() => setFilter(b.k)} style={{
               display: "flex", alignItems: "center", gap: 8, cursor: "pointer",

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { fetchWithTimeout } from "../lib/fetchWithTimeout.js";
+import { COMPANYAI_PROMPT } from "../connectors/companyai.js";
 
 // Dev-only: returns the RAW response straight from the source, before any
 // normalization — used to confirm real field names when wiring a new
@@ -33,7 +34,7 @@ debugRouter.get("/api/debug/openrouter/activity", async (_req, res) => {
   }
 });
 
-debugRouter.get("/api/debug/openwebui", async (_req, res) => {
+debugRouter.get("/api/debug/openwebui/analytics", async (_req, res) => {
   if (!process.env.OPENWEBUI_TOKEN || !process.env.OPENWEBUI_URL) {
     return res.status(400).json({ error: "OPENWEBUI_URL / OPENWEBUI_TOKEN not set" });
   }
@@ -42,6 +43,34 @@ debugRouter.get("/api/debug/openwebui", async (_req, res) => {
     const r = await fetchWithTimeout(`${process.env.OPENWEBUI_URL}${path}`, {
       headers: { Authorization: `Bearer ${process.env.OPENWEBUI_TOKEN}` },
     });
+    const text = await r.text();
+    res.status(r.status).type("application/json").send(text);
+  } catch (e) {
+    res.status(500).json({ error: String(e) });
+  }
+});
+
+debugRouter.get("/api/debug/companyai/raw", async (_req, res) => {
+  if (!process.env.OPENWEBUI_TOKEN || !process.env.OPENWEBUI_URL) {
+    return res.status(400).json({ error: "OPENWEBUI_URL / OPENWEBUI_TOKEN not set" });
+  }
+  if (!process.env.OPENWEBUI_COMPANYAI_MODEL) {
+    return res.status(400).json({ error: "OPENWEBUI_COMPANYAI_MODEL not set" });
+  }
+  try {
+    const path = process.env.OPENWEBUI_CHAT_COMPLETIONS_PATH || "/api/chat/completions";
+    const r = await fetchWithTimeout(
+      `${process.env.OPENWEBUI_URL}${path}`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${process.env.OPENWEBUI_TOKEN}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: process.env.OPENWEBUI_COMPANYAI_MODEL,
+          messages: [{ role: "user", content: COMPANYAI_PROMPT }],
+        }),
+      },
+      20000
+    );
     const text = await r.text();
     res.status(r.status).type("application/json").send(text);
   } catch (e) {

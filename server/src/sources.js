@@ -10,4 +10,5 @@ export const SOURCES_META = {
   cicd: { label: "CI/CD (Engineering Squad)" },
   workflows: { label: "n8n / Zapier" },
   derived: { label: "Derived formula" },
+  companyai: { label: "Company AI (fallback)" },
 };

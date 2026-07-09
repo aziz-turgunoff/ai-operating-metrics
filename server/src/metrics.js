@@ -25,8 +25,25 @@ function sumJobsByTrade(apolloData) {
   return total || null;
 }
 
+// Source B (direct LeadBank/Apollo) wins whenever it's live. Source C
+// (companyai) only fills in when B is exactly "pending" — never when B is
+// "error", since a broken direct integration is a signal to fix, not paper
+// over with an AI guess. Never used when it can't produce a real value.
+function preferDirect(directValue, directStatus, directSourceKey, companyaiResult, companyaiPath) {
+  if (directStatus === "live" && directValue != null) {
+    return { value: directValue, source: directSourceKey, note: null };
+  }
+  if (directStatus === "pending" && companyaiResult?.status === "fallback") {
+    const fbValue = pick(companyaiResult.data, [companyaiPath]);
+    if (fbValue != null) {
+      return { value: fbValue, source: "companyai", note: companyaiResult.note ?? "Temporary — replace with direct LeadBank/Apollo keys" };
+    }
+  }
+  return { value: null, source: directSourceKey, note: null };
+}
+
 export function buildReport(results) {
-  const { openrouter, openwebui, leadbank, apollo, qdrant, fireflies, cicd, workflows, derivedResult } = results;
+  const { openrouter, openwebui, leadbank, apollo, qdrant, fireflies, cicd, workflows, companyai: ca, derivedResult } = results;
 
   const lb = leadbank.status === "live" ? leadbank.data : null;
   const ap = apollo.status === "live" ? apollo.data : null;
@@ -42,10 +59,10 @@ export function buildReport(results) {
       key: "hours_saved", label: "Hours Saved by AI", unit: "hrs", source: "derived",
       value: derivedResult.hoursSaved, note: derivedResult.note,
     },
-    {
-      key: "revenue", label: "Revenue Influenced / Recovered", unit: "$", source: "leadbank",
-      value: pick(lb, ["revenue"]),
-    },
+    (() => {
+      const merged = preferDirect(pick(lb, ["revenue"]), leadbank.status, "leadbank", ca, "leadbank.revenue");
+      return { key: "revenue", label: "Revenue Influenced / Recovered", unit: "$", ...merged };
+    })(),
     {
       key: "deployments", label: "Production AI Deployments", unit: "", source: "cicd",
       value: Array.isArray(ci) ? ci.length : pick(ci, ["count", "deployments_count"]),
@@ -117,13 +134,23 @@ export function buildReport(results) {
     {
       name: "Business Impact",
       metrics: [
-        {
-          label: "Calls processed", source: "leadbank", value: pick(lb, ["calls"]),
-          note: lb ? `${fmtNullable(pick(lb, ["invalid"]))} invalid, ${fmtNullable(pick(lb, ["disputes"]))} disputes — total minus paid minus invalid leaves an unclassified bucket LeadBank doesn't label` : null,
-        },
-        { label: "Paid / converted", source: "leadbank", value: pick(lb, ["paid"]) },
-        { label: "Conversion rate", unit: "%", source: "leadbank", value: pick(lb, ["conversionRate"]) },
-        { label: "Revenue influenced / recovered", unit: "$", source: "leadbank", value: pick(lb, ["revenue"]) },
+        (() => {
+          const merged = preferDirect(pick(lb, ["calls"]), leadbank.status, "leadbank", ca, "leadbank.calls");
+          const bNote = lb ? `${fmtNullable(pick(lb, ["invalid"]))} invalid, ${fmtNullable(pick(lb, ["disputes"]))} disputes — total minus paid minus invalid leaves an unclassified bucket LeadBank doesn't label` : null;
+          return { label: "Calls processed", ...merged, note: merged.note ?? bNote };
+        })(),
+        (() => {
+          const merged = preferDirect(pick(lb, ["paid"]), leadbank.status, "leadbank", ca, "leadbank.paid");
+          return { label: "Paid / converted", ...merged };
+        })(),
+        (() => {
+          const merged = preferDirect(pick(lb, ["conversionRate"]), leadbank.status, "leadbank", ca, "leadbank.conversionRate");
+          return { label: "Conversion rate", unit: "%", ...merged };
+        })(),
+        (() => {
+          const merged = preferDirect(pick(lb, ["revenue"]), leadbank.status, "leadbank", ca, "leadbank.revenue");
+          return { label: "Revenue influenced / recovered", unit: "$", ...merged };
+        })(),
         { label: "Profit", unit: "$", source: "leadbank", value: pick(lb, ["profit"]) },
         { label: "Payout", unit: "$", source: "leadbank", value: pick(lb, ["payout"]) },
         {
@@ -142,14 +169,17 @@ export function buildReport(results) {
           label: "Membership opportunities identified", source: "apollo", value: null,
           note: "Distinct from \"memberships sold\" below — no source confirmed yet",
         },
-        {
-          label: "Memberships sold", source: "apollo", value: pick(ap, ["memberships.sold"]),
-          note: ap ? `Scoped by "${pick(ap, ["memberships.query"])}"-level query — the other scope returns a different total; pending source-of-truth decision` : "Two conflicting totals in Apollo (agent-level vs dept-level) — pending source-of-truth decision",
-        },
-        {
-          label: "Jobs won", source: "apollo",
-          value: ap ? sumJobsByTrade(ap) : null,
-        },
+        (() => {
+          const merged = preferDirect(pick(ap, ["memberships.sold"]), apollo.status, "apollo", ca, "apollo.memberships");
+          const bNote = ap
+            ? `Scoped by "${pick(ap, ["memberships.query"])}"-level query — the other scope returns a different total; pending source-of-truth decision`
+            : "Two conflicting totals in Apollo (agent-level vs dept-level) — pending source-of-truth decision";
+          return { label: "Memberships sold", ...merged, note: merged.note ?? bNote };
+        })(),
+        (() => {
+          const merged = preferDirect(ap ? sumJobsByTrade(ap) : null, apollo.status, "apollo", ca, "apollo.jobsWon");
+          return { label: "Jobs won", ...merged };
+        })(),
         {
           label: "Opportunities", source: "apollo", value: null,
           note: "No \"opportunities\" field exists in Apollo — metric undefined until redefined",
