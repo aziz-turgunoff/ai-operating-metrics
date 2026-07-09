@@ -1,8 +1,14 @@
 // Moved from local SQLite to a hosted Postgres (Neon, via Vercel's
 // marketplace integration) on 2026-07-11 so serverless functions on Vercel
 // have a real persistent DB — a SQLite file doesn't survive between
-// stateless function invocations. Local dev points DATABASE_URL at the same
-// Neon instance (see server/.env); no separate local DB needed.
+// stateless function invocations.
+//
+// Split into separate Neon branches on 2026-07-11 so local experiments can't
+// corrupt production data: local dev (server/.env, gitignored) points at the
+// "dev" branch; production's connection strings live ONLY in Vercel's env
+// vars, never in a local file. Both branches share the same schema/history —
+// migrate each independently with `prisma migrate deploy` against its own
+// DATABASE_URL_UNPOOLED.
 generator client {
   provider = "prisma-client-js"
 }
