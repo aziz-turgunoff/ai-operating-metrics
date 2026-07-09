@@ -33,22 +33,31 @@ const TOKENS = {
     fallbackBg: "rgba(177,138,240,0.10)",
     accent: "#5B8DEF",
   },
+  // "Soft Slate" — winner of a 3-way judge-panel design review (2026-07-10),
+  // refined further to fix the two issues both judges flagged: panel was
+  // still near-white (L=0.94, barely below pure white) despite being the
+  // dominant surface users actually stare at, and inkFaint failed AA (2.45:1).
+  // Every value below is WCAG-verified: ink 11.8:1/13.1:1, inkDim 5.6:1/6.2:1,
+  // inkFaint 4.5:1/5.0:1, all status colors >=5.2:1 against both bg and panel
+  // (bg is the tighter constraint since panel is lighter — targeting bg first
+  // guarantees panel margin for free). Warm off-white hue family (not cool
+  // blue-white) genuinely cuts blue-light glare, not just a brightness drop.
   light: {
-    bg: "#F4F5F8",
-    panel: "#FFFFFF",
-    panelEdge: "#E1E4EA",
-    ink: "#161A22",
-    inkDim: "#5B6472",
-    inkFaint: "#9AA3B2",
-    live: "#1E9A63",
-    liveBg: "rgba(30,154,99,0.10)",
-    pending: "#A9720F",
-    pendingBg: "rgba(169,114,15,0.10)",
-    error: "#C23B3B",
-    errorBg: "rgba(194,59,59,0.08)",
-    fallback: "#7B4FD1",
-    fallbackBg: "rgba(123,79,209,0.09)",
-    accent: "#3B63D6",
+    bg: "#E9E2D4",
+    panel: "#F3EEE4",
+    panelEdge: "#D2C7B2",
+    ink: "#2A2521",
+    inkDim: "#5F5648",
+    inkFaint: "#6D645A",
+    live: "#1B6841",
+    liveBg: "rgba(27,104,65,0.10)",
+    pending: "#805209",
+    pendingBg: "rgba(128,82,9,0.10)",
+    error: "#A3362F",
+    errorBg: "rgba(163,54,47,0.08)",
+    fallback: "#6748AE",
+    fallbackBg: "rgba(103,72,174,0.09)",
+    accent: "#2D54BC",
   },
 };
 const FONTS = {
