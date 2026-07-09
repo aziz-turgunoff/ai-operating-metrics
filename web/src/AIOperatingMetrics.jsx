@@ -81,9 +81,13 @@ function statusMeta(T, status) {
 
 function fmt(value, unit) {
   if (value === null || value === undefined) return "—";
-  if (unit === "$" && typeof value === "number") return "$" + value.toLocaleString();
-  if (unit && unit !== "$") return `${value}${unit === "%" ? "%" : " " + unit}`;
-  return String(value);
+  // Pin the locale so thousand-separators are always commas, regardless of
+  // the browser's own locale (some locales use periods/spaces instead).
+  const num = typeof value === "number" ? value.toLocaleString("en-US") : String(value);
+  if (unit === "$") return "$" + num;
+  if (unit === "%") return `${num}%`;
+  if (unit) return `${num} ${unit}`;
+  return num;
 }
 
 // Why a source isn't live: prefer the connector's own note/error over a generic label.
