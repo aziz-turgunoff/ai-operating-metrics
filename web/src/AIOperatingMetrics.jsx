@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useCallback } from "react";
-import { fetchMetrics, fetchHistory } from "./api.js";
+import { fetchMetrics, fetchHistory, fetchMonths, fetchMonthReport } from "./api.js";
 
 /*
   Home Alliance — AI Operating Metrics
@@ -13,6 +13,11 @@ import { fetchMetrics, fetchHistory } from "./api.js";
   - "error"   = connector is configured but the fetch failed.
   - History (sparklines) comes from GET /api/history, backed by the monthly
     snapshots persisted in the DB.
+  - The month picker: the current calendar month is ALWAYS live (GET
+    /api/metrics, fresh on every load). Past months are served from the most
+    recent snapshot taken that month (GET /api/months/:month/report) — a
+    cache, not a live re-fetch, since upstream sources don't keep their own
+    history. GET /api/months lists which past months have a snapshot at all.
 */
 
 const TOKENS = {
@@ -191,6 +196,31 @@ function MetricRow({ T, m, src }) {
   );
 }
 
+// Current calendar month is always "live" (month-to-date) — a snapshot for
+// this exact month, if one exists, is never offered as a cached alternative.
+function currentMonth() {
+  return new Date().toISOString().slice(0, 7);
+}
+
+function MonthPicker({ T, value, onChange, historicalMonths }) {
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      title="Live shows month-to-date data; past months are served from a cached snapshot"
+      style={{
+        background: T.panel, border: `1px solid ${T.panelEdge}`, color: T.ink,
+        borderRadius: 8, padding: "7px 11px", fontSize: 12, fontFamily: FONTS.mono, cursor: "pointer",
+      }}
+    >
+      <option value="live">{currentMonth()} · Live</option>
+      {historicalMonths.map((m) => (
+        <option key={m} value={m}>{m} · snapshot</option>
+      ))}
+    </select>
+  );
+}
+
 function ThemeToggle({ theme, onToggle, T }) {
   return (
     <button onClick={onToggle} title="Toggle light / dark mode" style={{
@@ -226,12 +256,25 @@ export default function AIOperatingMetrics() {
   const [payload, setPayload] = useState(null);
   const [err, setErr] = useState(null);
   const [snapshotMsg, setSnapshotMsg] = useState(null);
+  const [selectedMonth, setSelectedMonth] = useState("live"); // "live" | "YYYY-MM"
+  const [historicalMonths, setHistoricalMonths] = useState([]);
+
+  const isLive = selectedMonth === "live";
 
   const load = useCallback(() => {
-    fetchMetrics().then(setPayload).catch((e) => setErr(String(e)));
-  }, []);
+    const fetcher = isLive ? fetchMetrics() : fetchMonthReport(selectedMonth);
+    fetcher
+      .then((data) => { setPayload(data); setErr(null); })
+      .catch((e) => setErr(String(e)));
+  }, [isLive, selectedMonth]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    fetchMonths()
+      .then((data) => setHistoricalMonths((data.months ?? []).filter((m) => m !== currentMonth())))
+      .catch(() => setHistoricalMonths([]));
+  }, []);
 
   const sourcesMeta = payload?.sourcesMeta ?? {};
   const sources = payload?.sources ?? {};
@@ -268,9 +311,10 @@ export default function AIOperatingMetrics() {
   }
 
   if (err) {
+    const endpoint = isLive ? "/api/metrics" : `/api/months/${selectedMonth}/report`;
     return (
       <div style={{ background: T.bg, minHeight: "100vh", color: T.error, fontFamily: FONTS.mono, padding: 32 }}>
-        Failed to load /api/metrics — is the server running on :8787? ({err})
+        Failed to load {endpoint} — is the server running on :8787? ({err})
       </div>
     );
   }
@@ -285,26 +329,34 @@ export default function AIOperatingMetrics() {
           <div style={{ display: "flex", alignItems: "baseline", gap: 14, flexWrap: "wrap" }}>
             <h1 style={{ margin: 0, fontSize: 26, fontWeight: 650, letterSpacing: -0.4 }}>AI Operating Metrics</h1>
             <span style={{ fontFamily: FONTS.mono, fontSize: 12, color: T.inkDim }}>
-              Home Alliance · month-to-date · {payload.month}
+              Home Alliance · {isLive ? "month-to-date" : "cached snapshot"} · {payload.month}
             </span>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
+            <MonthPicker T={T} value={selectedMonth} onChange={setSelectedMonth} historicalMonths={historicalMonths} />
             <ThemeToggle theme={theme} onToggle={toggleTheme} T={T} />
-            <button onClick={takeSnapshot} style={{
-              background: T.panel, border: `1px solid ${T.panelEdge}`, color: T.ink,
-              borderRadius: 8, padding: "7px 13px", fontSize: 12, fontFamily: FONTS.mono, cursor: "pointer",
-            }}>
-              Save snapshot now
-            </button>
+            {isLive && (
+              <button onClick={takeSnapshot} style={{
+                background: T.panel, border: `1px solid ${T.panelEdge}`, color: T.ink,
+                borderRadius: 8, padding: "7px 13px", fontSize: 12, fontFamily: FONTS.mono, cursor: "pointer",
+              }}>
+                Save snapshot now
+              </button>
+            )}
           </div>
         </div>
         <p style={{ margin: "10px 0 6px", color: T.inkDim, fontSize: 13.5, maxWidth: 620 }}>
-          One roll-up across every AI system. Each metric shows its source status — green is live data,
-          amber is a source still being wired in, red is a configured source whose fetch failed, purple
-          ("AI EST.") is a temporary AI-guessed number standing in until a direct connector lands.
-          Hover any dot to see why.
+          {isLive ? (
+            <>One roll-up across every AI system. Each metric shows its source status — green is live data,
+            amber is a source still being wired in, red is a configured source whose fetch failed, purple
+            ("AI EST.") is a temporary AI-guessed number standing in until a direct connector lands.
+            Hover any dot to see why.</>
+          ) : (
+            <>Viewing a cached snapshot for {payload.month} — status dots reflect each source's state at
+            capture time, not right now. Switch back to "{currentMonth()} · Live" for month-to-date data.</>
+          )}
         </p>
-        {snapshotMsg && <p style={{ margin: "0 0 14px", color: T.accent, fontSize: 11.5, fontFamily: FONTS.mono }}>{snapshotMsg}</p>}
+        {isLive && snapshotMsg && <p style={{ margin: "0 0 14px", color: T.accent, fontSize: 11.5, fontFamily: FONTS.mono }}>{snapshotMsg}</p>}
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           {[
