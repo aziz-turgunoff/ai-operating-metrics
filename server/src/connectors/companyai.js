@@ -13,7 +13,7 @@
 // - OPENWEBUI_CHAT_COMPLETIONS_PATH defaults to /api/chat/completions
 // - OPENWEBUI_COMPANYAI_MODEL has no default — connector stays pending
 //   without it (need the model id that has leadbank_bi/apollo tools attached)
-import { fetchWithTimeout } from "../lib/fetchWithTimeout.js";
+import { fetchWithRetry } from "../lib/fetchWithRetry.js";
 
 export const COMPANYAI_PROMPT =
   'Return ONLY valid JSON, no text: {"leadbank":{"calls":null,"paid":null,"revenue":null,"conversionRate":null},"apollo":{"memberships":null,"jobsWon":null}}. ' +
@@ -37,7 +37,7 @@ export async function companyai() {
 
   try {
     const path = process.env.OPENWEBUI_CHAT_COMPLETIONS_PATH || "/api/chat/completions";
-    const r = await fetchWithTimeout(
+    const r = await fetchWithRetry(
       `${process.env.OPENWEBUI_URL}${path}`,
       {
         method: "POST",
@@ -49,6 +49,9 @@ export async function companyai() {
       },
       20000 // LLM + tool calls can run well past the default 10s
     );
+    // Note: fetchWithRetry only retries a transient network/timeout failure
+    // (the fetch throwing) — a slow-but-successful completion just resolves
+    // once. A real HTTP error response below is never retried.
     if (!r.ok) return { status: "error", error: `HTTP ${r.status}`, note: "Company-AI fallback request failed" };
 
     const json = await r.json();

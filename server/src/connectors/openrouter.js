@@ -6,8 +6,19 @@
 // window, NOT the calendar month, and it excludes the current UTC day. We sum
 // whatever it returns and surface that as a caveat rather than pretend it's
 // month-to-date.
-import { fetchWithTimeout } from "../lib/fetchWithTimeout.js";
+import { fetchWithRetry } from "../lib/fetchWithRetry.js";
 import { num, pick } from "../lib/normalize.js";
+
+// /auth/key is a single small object — fast under normal conditions, but
+// stress testing showed an intermittent "AbortError: This operation was
+// aborted" (1/20 runs) at the old default 10000ms, which turned into a hard
+// connector-wide status:"error" since this call has no fallback. Give it
+// headroom and retry once on that class of transient failure.
+const AUTH_KEY_TIMEOUT_MS = 15000;
+// /activity returns per-model daily rows for a rolling 30-day window — a
+// bigger payload than /auth/key — so it gets more headroom too, even though
+// its own failure already degrades gracefully to auth-only totals below.
+const ACTIVITY_TIMEOUT_MS = 20000;
 
 function normalizeAuthKey(json) {
   const usage = num(pick(json, ["data.usage", "usage"]));
@@ -51,9 +62,11 @@ export async function openrouter() {
 
   let authTotals;
   try {
-    const r = await fetchWithTimeout("https://openrouter.ai/api/v1/auth/key", {
-      headers: { Authorization: `Bearer ${process.env.OPENROUTER_KEY}` },
-    });
+    const r = await fetchWithRetry(
+      "https://openrouter.ai/api/v1/auth/key",
+      { headers: { Authorization: `Bearer ${process.env.OPENROUTER_KEY}` } },
+      AUTH_KEY_TIMEOUT_MS
+    );
     if (!r.ok) return { status: "error", error: `HTTP ${r.status} from /auth/key` };
     authTotals = normalizeAuthKey(await r.json());
   } catch (e) {
@@ -78,9 +91,11 @@ export async function openrouter() {
   }
 
   try {
-    const r = await fetchWithTimeout("https://openrouter.ai/api/v1/activity", {
-      headers: { Authorization: `Bearer ${process.env.OPENROUTER_MGMT_KEY}` },
-    });
+    const r = await fetchWithRetry(
+      "https://openrouter.ai/api/v1/activity",
+      { headers: { Authorization: `Bearer ${process.env.OPENROUTER_MGMT_KEY}` } },
+      ACTIVITY_TIMEOUT_MS
+    );
     if (!r.ok) {
       return {
         status: "live",

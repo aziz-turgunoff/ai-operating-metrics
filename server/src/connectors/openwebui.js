@@ -20,10 +20,17 @@
 // Authorization header itself. If Bearer gets a 401, retry once with
 // x-api-key before giving up — see fetchOpenWebUI(). (Bearer worked fine in
 // testing; this is defensive for other environments/tokens.)
-import { fetchWithTimeout } from "../lib/fetchWithTimeout.js";
+import { fetchWithRetry } from "../lib/fetchWithRetry.js";
 import { num, pick } from "../lib/normalize.js";
 
 const BASE_PATH = "/api/v1/analytics";
+// /users and /daily scale with org user count and days-in-month respectively
+// (see notes above) and all 4 endpoints run in parallel with an internal
+// bearer -> x-api-key auth-fallback retry each, so the old default 10000ms
+// per attempt left little headroom on a large org. Raised for real latency
+// headroom; fetchWithRetry additionally covers one transient network/timeout
+// retry on top of that (not an auth retry — that's handled separately below).
+const TIMEOUT_MS = 15000;
 
 export function monthWindow() {
   const now = new Date();
@@ -38,14 +45,18 @@ export async function fetchOpenWebUI(path, params = {}) {
   const url = new URL(`${process.env.OPENWEBUI_URL}${path}`);
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
 
-  const bearer = await fetchWithTimeout(url.toString(), {
-    headers: { Authorization: `Bearer ${process.env.OPENWEBUI_TOKEN}` },
-  });
+  const bearer = await fetchWithRetry(
+    url.toString(),
+    { headers: { Authorization: `Bearer ${process.env.OPENWEBUI_TOKEN}` } },
+    TIMEOUT_MS
+  );
   if (bearer.status !== 401) return bearer;
 
-  return fetchWithTimeout(url.toString(), {
-    headers: { "x-api-key": process.env.OPENWEBUI_TOKEN },
-  });
+  return fetchWithRetry(
+    url.toString(),
+    { headers: { "x-api-key": process.env.OPENWEBUI_TOKEN } },
+    TIMEOUT_MS
+  );
 }
 
 function normalizeSummary(json) {
