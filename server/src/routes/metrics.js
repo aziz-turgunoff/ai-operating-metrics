@@ -27,7 +27,7 @@ metricsRouter.get("/api/metrics", async (_req, res) => {
       leadbank: results.leadbank, apollo: results.apollo,
       qdrant: results.qdrant, fireflies: results.fireflies,
       cicd: results.cicd, workflows: results.workflows,
-      derived: results.derived,
+      derived: results.derived, companyai: results.companyai,
     },
     report,
   });
