@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { fetchWithTimeout } from "../lib/fetchWithTimeout.js";
 import { COMPANYAI_PROMPT } from "../connectors/companyai.js";
+import { fetchOpenWebUI, monthWindow } from "../connectors/openwebui.js";
 
 // Dev-only: returns the RAW response straight from the source, before any
 // normalization — used to confirm real field names when wiring a new
@@ -39,12 +40,16 @@ debugRouter.get("/api/debug/openwebui/analytics", async (_req, res) => {
     return res.status(400).json({ error: "OPENWEBUI_URL / OPENWEBUI_TOKEN not set" });
   }
   try {
-    const path = process.env.OPENWEBUI_ANALYTICS_PATH || "/api/v1/analytics";
-    const r = await fetchWithTimeout(`${process.env.OPENWEBUI_URL}${path}`, {
-      headers: { Authorization: `Bearer ${process.env.OPENWEBUI_TOKEN}` },
+    const window = monthWindow();
+    const [summaryRes, usersRes] = await Promise.all([
+      fetchOpenWebUI("/api/v1/analytics/summary", window),
+      fetchOpenWebUI("/api/v1/analytics/users", window),
+    ]);
+    res.json({
+      window,
+      summary: { status: summaryRes.status, body: await summaryRes.text() },
+      users: { status: usersRes.status, body: await usersRes.text() },
     });
-    const text = await r.text();
-    res.status(r.status).type("application/json").send(text);
   } catch (e) {
     res.status(500).json({ error: String(e) });
   }
