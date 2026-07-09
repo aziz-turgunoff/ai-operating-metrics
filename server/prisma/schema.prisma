@@ -1,0 +1,42 @@
+// Local dev uses SQLite (zero setup). To move to Postgres for production:
+// 1. change provider to "postgresql" below
+// 2. set DATABASE_URL to a Postgres connection string
+// 3. run `npm run db:migrate -w server`
+// Field types here (String/Int/Float/DateTime/Boolean, JSON-as-String) are
+// intentionally portable across both providers — no SQLite-only features used.
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// One row per snapshot run (manual or monthly cron). Keeps the raw payload
+// from every connector so nothing is lost even if the metric mapping changes later.
+model Snapshot {
+  id          Int           @id @default(autoincrement())
+  month       String // "2026-07"
+  capturedAt  DateTime      @default(now())
+  raw         String // JSON.stringify of { sources: {...} } as returned by connectors
+  metrics     MetricValue[]
+}
+
+// One row per individual metric value in a snapshot — normalized so the
+// frontend can query a single metric's history over time without parsing raw JSON.
+model MetricValue {
+  id           Int      @id @default(autoincrement())
+  snapshotId   Int
+  snapshot     Snapshot @relation(fields: [snapshotId], references: [id])
+  category     String // "northStar" | category name e.g. "AI Adoption"
+  metricKey    String // e.g. "hours_saved"
+  label        String
+  value        Float?
+  valueText    String? // for non-numeric values (e.g. "10.5%") if needed
+  unit         String?
+  source       String
+  sourceStatus String // "live" | "pending" | "mock" | "error"
+
+  @@index([metricKey, snapshotId])
+}

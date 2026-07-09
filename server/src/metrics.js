@@ -1,0 +1,163 @@
+// Maps raw connector payloads into Sardor's report shape (2026-07-02,
+// #devs-and-product). This is the ONLY place that translates "raw API
+// response" into "a number on the dashboard" — connectors stay dumb fetchers.
+//
+// IMPORTANT: real field names below are best-guess until each source is
+// confirmed live end-to-end. `pick()` never invents a number — if none of the
+// candidate paths resolve, the metric stays null and renders as "—".
+
+function pick(obj, paths) {
+  for (const path of paths) {
+    const value = path.split(".").reduce((o, k) => (o == null ? undefined : o[k]), obj);
+    if (value !== undefined && value !== null) return value;
+  }
+  return null;
+}
+
+function fmtNullable(v) {
+  return v === null || v === undefined ? "an unknown number of" : v;
+}
+
+function sumJobsByTrade(apolloData) {
+  const trades = apolloData?.jobsByTrade ?? [];
+  if (!trades.length) return null;
+  const total = trades.reduce((acc, t) => acc + (typeof t.count === "number" ? t.count : 0), 0);
+  return total || null;
+}
+
+export function buildReport(results) {
+  const { openrouter, openwebui, leadbank, apollo, qdrant, fireflies, cicd, workflows, derivedResult } = results;
+
+  const lb = leadbank.status === "live" ? leadbank.data : null;
+  const ap = apollo.status === "live" ? apollo.data : null;
+  const ow = openwebui.status === "live" ? openwebui.data : null;
+  const or_ = openrouter.status === "live" ? openrouter.data : null;
+  const qd = qdrant.status === "live" ? qdrant.data : null;
+  const ff = fireflies.status === "live" ? fireflies.data : null;
+  const ci = cicd.status === "live" ? cicd.data : null;
+  const wf = workflows.status === "live" ? workflows.data : null;
+
+  const northStar = [
+    {
+      key: "hours_saved", label: "Hours Saved by AI", unit: "hrs", source: "derived",
+      value: derivedResult.hoursSaved, note: derivedResult.note,
+    },
+    {
+      key: "revenue", label: "Revenue Influenced / Recovered", unit: "$", source: "leadbank",
+      value: pick(lb, ["revenue"]),
+    },
+    {
+      key: "deployments", label: "Production AI Deployments", unit: "", source: "cicd",
+      value: Array.isArray(ci) ? ci.length : pick(ci, ["count", "deployments_count"]),
+    },
+    {
+      key: "kb_growth", label: "Knowledge Base Growth", unit: "%", source: "qdrant",
+      value: pick(qd, ["growth_pct"]), note: qd ? null : "Awaiting Grafana history",
+    },
+    {
+      key: "idea_to_prod", label: "Avg Idea → Production", unit: "days", source: "cicd",
+      value: pick(ci, ["avg_idea_to_prod_days"]),
+    },
+  ];
+
+  const categories = [
+    {
+      name: "AI Adoption",
+      metrics: [
+        { label: "Active users", source: "openwebui", value: pick(ow, ["activeUsers"]) },
+        { label: "Interactions (msgs)", source: "openwebui", value: pick(ow, ["messages"]) },
+        { label: "Tokens processed", source: "openrouter", value: pick(or_, ["tokens"]) },
+        { label: "Total spend", unit: "$", source: "openrouter", value: pick(or_, ["spend"]) },
+        { label: "Requests", source: "openrouter", value: pick(or_, ["requests"]) },
+        {
+          label: "Depts using AI", source: "openwebui", value: null,
+          note: "Open WebUI has no department field — would need a per-user-to-dept mapping elsewhere",
+        },
+      ],
+    },
+    {
+      name: "Engineering Velocity",
+      metrics: [
+        { label: "Production deployments", source: "cicd", value: Array.isArray(ci) ? ci.length : null },
+        { label: "AI workflows shipped", source: "workflows", value: pick(wf, ["workflows_shipped"]) },
+        { label: "New agents", source: "cicd", value: pick(ci, ["new_agents"]) },
+        { label: "New MCP tools", source: "cicd", value: pick(ci, ["new_mcp_tools"]) },
+        { label: "Avg idea → production", unit: "days", source: "cicd", value: pick(ci, ["avg_idea_to_prod_days"]) },
+      ],
+    },
+    {
+      name: "Company Intelligence",
+      metrics: [
+        { label: "Meetings ingested", source: "fireflies", value: pick(ff, ["data.transcripts.length"]) },
+        { label: "Transcripts", source: "fireflies", value: pick(ff, ["data.transcripts.length"]) },
+        { label: "Knowledge records", source: "qdrant", value: pick(qd, ["points_count", "vectors_count"]) },
+        { label: "Slack messages idx", source: "qdrant", value: pick(qd, ["slack_messages_indexed"]) },
+        { label: "New data sources", source: "qdrant", value: pick(qd, ["new_sources"]) },
+      ],
+    },
+    {
+      name: "Automation Impact",
+      metrics: [
+        { label: "Tasks automated", source: "workflows", value: pick(wf, ["tasksAutomated", "data.length"]) },
+        { label: "Workflow executions", source: "workflows", value: pick(wf, ["data.length"]) },
+        { label: "Reports auto-gen", source: "workflows", value: pick(wf, ["reports_generated"]) },
+        { label: "Meetings summarized", source: "fireflies", value: pick(ff, ["data.transcripts.length"]) },
+        { label: "AI action items", source: "fireflies", value: pick(ff, ["action_items_count"]) },
+      ],
+    },
+    {
+      name: "Business Impact",
+      metrics: [
+        {
+          label: "Calls processed", source: "leadbank", value: pick(lb, ["calls"]),
+          note: lb ? `${fmtNullable(pick(lb, ["invalid"]))} invalid, ${fmtNullable(pick(lb, ["disputes"]))} disputes — total minus paid minus invalid leaves an unclassified bucket LeadBank doesn't label` : null,
+        },
+        { label: "Paid / converted", source: "leadbank", value: pick(lb, ["paid"]) },
+        { label: "Conversion rate", unit: "%", source: "leadbank", value: pick(lb, ["conversionRate"]) },
+        { label: "Revenue influenced / recovered", unit: "$", source: "leadbank", value: pick(lb, ["revenue"]) },
+        { label: "Profit", unit: "$", source: "leadbank", value: pick(lb, ["profit"]) },
+        { label: "Payout", unit: "$", source: "leadbank", value: pick(lb, ["payout"]) },
+        {
+          label: "Cost savings", unit: "$", source: "derived", value: derivedResult.costSavings,
+          note: `$${derivedResult.rateUsdPerHour}/hr locked; ${derivedResult.note ?? ""}`.trim(),
+        },
+        {
+          label: "QA hours eliminated", source: "leadbank", value: null,
+          note: "No hours-eliminated field yet — LeadBank CallQA only exposes a % time-reduction figure",
+        },
+        {
+          label: "OOSA opportunities identified", source: "leadbank", value: null,
+          note: "Source TBD — likely LeadBank CallQA per thread, not yet confirmed",
+        },
+        {
+          label: "Membership opportunities identified", source: "apollo", value: null,
+          note: "Distinct from \"memberships sold\" below — no source confirmed yet",
+        },
+        {
+          label: "Memberships sold", source: "apollo", value: pick(ap, ["memberships.sold"]),
+          note: ap ? `Scoped by "${pick(ap, ["memberships.query"])}"-level query — the other scope returns a different total; pending source-of-truth decision` : "Two conflicting totals in Apollo (agent-level vs dept-level) — pending source-of-truth decision",
+        },
+        {
+          label: "Jobs won", source: "apollo",
+          value: ap ? sumJobsByTrade(ap) : null,
+        },
+        {
+          label: "Opportunities", source: "apollo", value: null,
+          note: "No \"opportunities\" field exists in Apollo — metric undefined until redefined",
+        },
+      ],
+    },
+    {
+      name: "AI Infrastructure Growth",
+      metrics: [
+        { label: "Qdrant records", source: "qdrant", value: pick(qd, ["points_count", "vectors_count"]) },
+        { label: "Active AI skills", source: "cicd", value: pick(ci, ["active_skills"]) },
+        { label: "Internal agents", source: "cicd", value: pick(ci, ["internal_agents"]) },
+        { label: "Protected MCP endpts", source: "cicd", value: pick(ci, ["protected_mcp_endpoints"]) },
+        { label: "Connected systems", source: "openwebui", value: pick(ow, ["connected_systems"]) },
+      ],
+    },
+  ];
+
+  return { northStar, categories };
+}
