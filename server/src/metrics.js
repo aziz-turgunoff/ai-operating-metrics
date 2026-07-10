@@ -18,23 +18,31 @@ function fmtNullable(v) {
   return v === null || v === undefined ? "an unknown number of" : v;
 }
 
-function sumJobsByTrade(apolloData) {
-  const trades = apolloData?.jobsByTrade ?? [];
-  if (!trades.length) return null;
+function sumTradeCounts(trades) {
+  if (!Array.isArray(trades) || !trades.length) return null;
   const total = trades.reduce((acc, t) => acc + (typeof t.count === "number" ? t.count : 0), 0);
   return total || null;
+}
+
+function sumJobsByTrade(apolloData) {
+  return sumTradeCounts(apolloData?.jobsByTrade);
 }
 
 // Source B (direct LeadBank/Apollo) wins whenever it's live. Source C
 // (companyai) only fills in when B is exactly "pending" — never when B is
 // "error", since a broken direct integration is a signal to fix, not paper
 // over with an AI guess. Never used when it can't produce a real value.
-function preferDirect(directValue, directStatus, directSourceKey, companyaiResult, companyaiPath) {
+// companyaiPathOrFn is either a dot-path string (pick()'d from companyai's
+// data) or a function(data) for shapes pick() can't express, e.g. summing
+// an array field.
+function preferDirect(directValue, directStatus, directSourceKey, companyaiResult, companyaiPathOrFn) {
   if (directStatus === "live" && directValue != null) {
     return { value: directValue, source: directSourceKey, note: null };
   }
   if (directStatus === "pending" && companyaiResult?.status === "fallback") {
-    const fbValue = pick(companyaiResult.data, [companyaiPath]);
+    const fbValue = typeof companyaiPathOrFn === "function"
+      ? companyaiPathOrFn(companyaiResult.data)
+      : pick(companyaiResult.data, [companyaiPathOrFn]);
     if (fbValue != null) {
       return { value: fbValue, source: "companyai", note: companyaiResult.note ?? "Temporary — replace with direct LeadBank/Apollo keys" };
     }
@@ -151,7 +159,10 @@ export function buildReport(results) {
           const merged = preferDirect(pick(lb, ["revenue"]), leadbank.status, "leadbank", ca, "leadbank.revenue");
           return { label: "Revenue influenced / recovered", unit: "$", ...merged };
         })(),
-        { label: "Profit", unit: "$", source: "leadbank", value: pick(lb, ["profit"]) },
+        (() => {
+          const merged = preferDirect(pick(lb, ["profit"]), leadbank.status, "leadbank", ca, "leadbank.profit");
+          return { label: "Profit", unit: "$", ...merged };
+        })(),
         { label: "Payout", unit: "$", source: "leadbank", value: pick(lb, ["payout"]) },
         {
           label: "Cost savings", unit: "$", source: "derived", value: derivedResult.costSavings,
@@ -170,14 +181,17 @@ export function buildReport(results) {
           note: "Distinct from \"memberships sold\" below — no source confirmed yet",
         },
         (() => {
-          const merged = preferDirect(pick(ap, ["memberships.sold"]), apollo.status, "apollo", ca, "apollo.memberships");
+          const merged = preferDirect(pick(ap, ["memberships.sold"]), apollo.status, "apollo", ca, "apollo.memberships.sold");
           const bNote = ap
             ? `Scoped by "${pick(ap, ["memberships.query"])}"-level query — the other scope returns a different total; pending source-of-truth decision`
             : "Two conflicting totals in Apollo (agent-level vs dept-level) — pending source-of-truth decision";
           return { label: "Memberships sold", ...merged, note: merged.note ?? bNote };
         })(),
         (() => {
-          const merged = preferDirect(ap ? sumJobsByTrade(ap) : null, apollo.status, "apollo", ca, "apollo.jobsWon");
+          const merged = preferDirect(
+            ap ? sumJobsByTrade(ap) : null, apollo.status, "apollo", ca,
+            (data) => sumTradeCounts(data?.apollo?.jobsByTrade)
+          );
           return { label: "Jobs won", ...merged };
         })(),
         {

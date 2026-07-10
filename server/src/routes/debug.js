@@ -1,7 +1,21 @@
 import { Router } from "express";
 import { fetchWithTimeout } from "../lib/fetchWithTimeout.js";
-import { COMPANYAI_PROMPT } from "../connectors/companyai.js";
+import { LEADBANK_PROMPT, APOLLO_PROMPT } from "../connectors/companyai.js";
 import { fetchOpenWebUI, monthWindow } from "../connectors/openwebui.js";
+
+async function chatCompletion(prompt) {
+  const path = process.env.OPENWEBUI_CHAT_COMPLETIONS_PATH || "/api/chat/completions";
+  const r = await fetchWithTimeout(
+    `${process.env.OPENWEBUI_URL}${path}`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${process.env.OPENWEBUI_TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model: process.env.OPENWEBUI_COMPANYAI_MODEL, messages: [{ role: "user", content: prompt }] }),
+    },
+    20000
+  );
+  return { status: r.status, body: await r.text() };
+}
 
 // Dev-only: returns the RAW response straight from the source, before any
 // normalization — used to confirm real field names when wiring a new
@@ -55,6 +69,8 @@ debugRouter.get("/api/debug/openwebui/analytics", async (_req, res) => {
   }
 });
 
+// Dumps both raw model responses side by side — one per system — so a
+// failure in one (e.g. Apollo) is never masked by the other succeeding.
 debugRouter.get("/api/debug/companyai/raw", async (_req, res) => {
   if (!process.env.OPENWEBUI_TOKEN || !process.env.OPENWEBUI_URL) {
     return res.status(400).json({ error: "OPENWEBUI_URL / OPENWEBUI_TOKEN not set" });
@@ -63,21 +79,14 @@ debugRouter.get("/api/debug/companyai/raw", async (_req, res) => {
     return res.status(400).json({ error: "OPENWEBUI_COMPANYAI_MODEL not set" });
   }
   try {
-    const path = process.env.OPENWEBUI_CHAT_COMPLETIONS_PATH || "/api/chat/completions";
-    const r = await fetchWithTimeout(
-      `${process.env.OPENWEBUI_URL}${path}`,
-      {
-        method: "POST",
-        headers: { Authorization: `Bearer ${process.env.OPENWEBUI_TOKEN}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: process.env.OPENWEBUI_COMPANYAI_MODEL,
-          messages: [{ role: "user", content: COMPANYAI_PROMPT }],
-        }),
-      },
-      20000
-    );
-    const text = await r.text();
-    res.status(r.status).type("application/json").send(text);
+    const [leadbank, apollo] = await Promise.all([
+      chatCompletion(LEADBANK_PROMPT).catch((e) => ({ status: null, body: null, error: String(e) })),
+      chatCompletion(APOLLO_PROMPT).catch((e) => ({ status: null, body: null, error: String(e) })),
+    ]);
+    res.json({
+      leadbank: { query: LEADBANK_PROMPT, ...leadbank },
+      apollo: { query: APOLLO_PROMPT, ...apollo },
+    });
   } catch (e) {
     res.status(500).json({ error: String(e) });
   }

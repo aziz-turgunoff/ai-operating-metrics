@@ -8,17 +8,43 @@
 // metrics.js only ever uses this when the direct source is "pending", never
 // to override a direct source that's live or even erroring.
 //
+// RE-ACTIVATED 2026-07-11: Shawn added access to the leadbank_bi_*/apollo_mcp_*
+// tools (LeadBank confirmed working; Apollo access was granted at the same
+// time but may still fail — see below). Split into two independent chat
+// completions (was one combined call) specifically so a failure in one
+// system never masks the other's real data, and so each has its own raw
+// response/error to hand to Shawn for debugging.
+//
 // Endpoint/model are best-guess and MUST be confirmed against the real
 // instance:
 // - OPENWEBUI_CHAT_COMPLETIONS_PATH defaults to /api/chat/completions
 // - OPENWEBUI_COMPANYAI_MODEL has no default — connector stays pending
-//   without it (need the model id that has leadbank_bi/apollo tools attached)
+//   without it. Confirmed 2026-07-11 via GET /api/models: the model named
+//   "Home Alliance AI" (not "... Lite") has id "home-allliance-ai" — note
+//   the typo (3 l's), that's the real id, not a mistake in this file.
+//
+// KNOWN: this connector's chat-completions call fails with "TypeError: fetch
+// failed" specifically from Vercel's network (analytics calls to the same
+// Open WebUI host work fine there) — test locally first. Not yet root-caused;
+// see server/vercel.json history.
 import { fetchWithRetry } from "../lib/fetchWithRetry.js";
 
-export const COMPANYAI_PROMPT =
-  'Return ONLY valid JSON, no text: {"leadbank":{"calls":null,"paid":null,"revenue":null,"conversionRate":null},"apollo":{"memberships":null,"jobsWon":null}}. ' +
-  "Use your leadbank_bi and apollo tools to fill in real current numbers. If a tool fails, put null for that field. " +
-  "Do not include any explanation, markdown, or code fences — JSON only.";
+export const LEADBANK_PROMPT =
+  'Return ONLY valid JSON, no text, no markdown fences: ' +
+  '{"calls":null,"paid":null,"invalid":null,"revenue":null,"profit":null,"conversionRate":null}. ' +
+  "Use your leadbank_bi tool(s) for the last 30 days (days=30 window) to fill in real current numbers for: " +
+  "total calls, paid/converted calls, invalid calls, revenue, profit, and conversion rate as a plain number " +
+  '(e.g. 10.5, not "10.5%"). If a field is unavailable, put null for that field only. ' +
+  "Do not include any explanation — JSON only.";
+
+export const APOLLO_PROMPT =
+  'Return ONLY valid JSON, no text, no markdown fences: ' +
+  '{"technicians":[{"name":null,"revenue":null,"jobs":null,"winRate":null}],' +
+  '"memberships":{"sold":null,"churn":null},"jobsByTrade":[{"trade":null,"count":null}]}. ' +
+  "Use your apollo tool(s) to fill in real current data: technician revenue/jobs/win-rate, " +
+  "total memberships sold and churned, and jobs won broken down by trade. " +
+  "If technicians or jobsByTrade data isn't available, return an empty array for that field. " +
+  "If memberships data isn't available, put null for sold/churn. Do not include any explanation — JSON only.";
 
 function extractJson(text) {
   // The model may ignore the "no fences" instruction — strip ```json blocks if present.
@@ -37,6 +63,44 @@ function allValuesNull(value) {
   return Object.values(value).every(allValuesNull);
 }
 
+// One chat completion for one system's prompt. Always returns enough to
+// debug: the exact query sent, the raw model output (or raw error body), and
+// whether it actually parsed — never throws, so Promise.all can't let one
+// system's failure take down the other's result.
+async function callModel(prompt) {
+  const path = process.env.OPENWEBUI_CHAT_COMPLETIONS_PATH || "/api/chat/completions";
+  try {
+    const r = await fetchWithRetry(
+      `${process.env.OPENWEBUI_URL}${path}`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${process.env.OPENWEBUI_TOKEN}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: process.env.OPENWEBUI_COMPANYAI_MODEL,
+          messages: [{ role: "user", content: prompt }],
+        }),
+      },
+      20000 // LLM + tool calls can run well past the default 10s
+    );
+    if (!r.ok) {
+      const bodyText = await r.text().catch(() => "");
+      return { ok: false, query: prompt, error: `HTTP ${r.status}`, raw: bodyText };
+    }
+    const json = await r.json();
+    const content = json?.choices?.[0]?.message?.content ?? json?.message?.content;
+    if (!content) return { ok: false, query: prompt, error: "no content in response", raw: JSON.stringify(json) };
+
+    try {
+      const parsed = extractJson(content);
+      return { ok: true, query: prompt, raw: content, parsed };
+    } catch (e) {
+      return { ok: false, query: prompt, error: `unparseable JSON: ${String(e)}`, raw: content };
+    }
+  } catch (e) {
+    return { ok: false, query: prompt, error: String(e), raw: null };
+  }
+}
+
 export async function companyai() {
   if (!process.env.OPENWEBUI_TOKEN || !process.env.OPENWEBUI_URL) {
     return { status: "pending", note: "OPENWEBUI_URL / OPENWEBUI_TOKEN not set" };
@@ -45,47 +109,39 @@ export async function companyai() {
     return { status: "pending", note: "OPENWEBUI_COMPANYAI_MODEL not set — pick the model with leadbank_bi/apollo tools attached" };
   }
 
-  try {
-    const path = process.env.OPENWEBUI_CHAT_COMPLETIONS_PATH || "/api/chat/completions";
-    const r = await fetchWithRetry(
-      `${process.env.OPENWEBUI_URL}${path}`,
-      {
-        method: "POST",
-        headers: { Authorization: `Bearer ${process.env.OPENWEBUI_TOKEN}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: process.env.OPENWEBUI_COMPANYAI_MODEL,
-          messages: [{ role: "user", content: COMPANYAI_PROMPT }],
-        }),
-      },
-      20000 // LLM + tool calls can run well past the default 10s
-    );
-    // Note: fetchWithRetry only retries a transient network/timeout failure
-    // (the fetch throwing) — a slow-but-successful completion just resolves
-    // once. A real HTTP error response below is never retried.
-    if (!r.ok) return { status: "error", error: `HTTP ${r.status}`, note: "Company-AI fallback request failed" };
+  const [lb, ap] = await Promise.all([callModel(LEADBANK_PROMPT), callModel(APOLLO_PROMPT)]);
 
-    const json = await r.json();
-    const content = json?.choices?.[0]?.message?.content ?? json?.message?.content;
-    if (!content) return { status: "degraded", note: "AI fallback returned no content to parse" };
+  const leadbankData = lb.ok ? lb.parsed : { calls: null, paid: null, invalid: null, revenue: null, profit: null, conversionRate: null };
+  const apolloData = ap.ok ? ap.parsed : { technicians: [], memberships: { sold: null, churn: null }, jobsByTrade: [] };
+  const data = { leadbank: leadbankData, apollo: apolloData };
 
-    try {
-      const parsed = extractJson(content);
-      if (allValuesNull(parsed)) {
-        return {
-          status: "degraded",
-          data: parsed,
-          note: "Parsed successfully but every field is null — leadbank_bi/apollo tools aren't returning data (confirmed 2026-07-10: fails in manual chat too, not just headless, so this is an upstream tool/backend issue, not a connector bug)",
-        };
-      }
-      return {
-        status: "fallback",
-        data: parsed,
-        note: "Temporary — replace with direct LeadBank/Apollo keys",
-      };
-    } catch {
-      return { status: "degraded", note: "AI fallback returned unparseable output", raw: content };
-    }
-  } catch (e) {
-    return { status: "error", error: String(e) };
+  // Always attach per-system debug info — this is the whole point of
+  // splitting the calls: an Apollo failure must stay visible even when
+  // LeadBank succeeds, with the exact query + raw response/error to hand to Shawn.
+  const debug = {
+    leadbank: { ok: lb.ok, query: lb.query, raw: lb.raw, error: lb.error ?? null },
+    apollo: { ok: ap.ok, query: ap.query, raw: ap.raw, error: ap.error ?? null },
+  };
+
+  if (!lb.ok && !ap.ok) {
+    return { status: "error", error: `LeadBank: ${lb.error}; Apollo: ${ap.error}`, debug };
   }
+
+  if (allValuesNull(data)) {
+    return {
+      status: "degraded",
+      data,
+      debug,
+      note: "Parsed successfully but every field is null — tools aren't returning data yet",
+    };
+  }
+
+  const apolloEmpty = !ap.ok || allValuesNull(apolloData);
+  return {
+    status: "fallback",
+    data,
+    debug,
+    note: "Temporary — replace with direct LeadBank/Apollo keys."
+      + (apolloEmpty ? " Apollo tool(s) still returning nothing/failing — see debug.apollo for Shawn." : ""),
+  };
 }
