@@ -26,7 +26,9 @@
 // KNOWN: this connector's chat-completions call fails with "TypeError: fetch
 // failed" specifically from Vercel's network (analytics calls to the same
 // Open WebUI host work fine there) — test locally first. Not yet root-caused;
-// see server/vercel.json history.
+// see server/vercel.json history. Handled below (2026-07-11): on Vercel, or
+// when this specific error shows up anywhere, companyai() reports "pending"
+// instead of "error" — it's a known environment block, not a real failure.
 import { fetchWithRetry } from "../lib/fetchWithRetry.js";
 
 export const LEADBANK_PROMPT =
@@ -61,6 +63,28 @@ function allValuesNull(value) {
   if (value === null || value === undefined) return true;
   if (typeof value !== "object") return false;
   return Object.values(value).every(allValuesNull);
+}
+
+// KNOWN: Vercel's network can't reach Open WebUI's /api/chat/completions
+// (analytics endpoints on the same host work fine there) — this is an
+// environment block, not a code bug, and the route is separately blocked on
+// tool execution anyway (see file header). Surfacing it as status:"error"
+// makes the dashboard's error count misleading in production; downgrade it
+// to "pending" instead. Detected two ways since either can fire first:
+// process.env.VERCEL (Vercel sets this in every deployment), or the fetch
+// itself throwing the specific "fetch failed" TypeError node-fetch/undici
+// raises on a blocked/unreachable host. Any OTHER failure (bad auth, 5xx,
+// unparseable JSON) is a real problem and must keep surfacing as "error".
+const NETWORK_BLOCK_NOTE =
+  "Company AI route unavailable on Vercel (chat endpoint blocked); also awaiting Open WebUI tool-execution support. Runs locally only.";
+
+function isFetchFailedError(error) {
+  return typeof error === "string" && /fetch failed/i.test(error);
+}
+
+function isKnownNetworkBlock(lb, ap) {
+  if (process.env.VERCEL) return true;
+  return isFetchFailedError(lb.error) && isFetchFailedError(ap.error);
 }
 
 // One chat completion for one system's prompt. Always returns enough to
@@ -124,6 +148,9 @@ export async function companyai() {
   };
 
   if (!lb.ok && !ap.ok) {
+    if (isKnownNetworkBlock(lb, ap)) {
+      return { status: "pending", note: NETWORK_BLOCK_NOTE, debug };
+    }
     return { status: "error", error: `LeadBank: ${lb.error}; Apollo: ${ap.error}`, debug };
   }
 
