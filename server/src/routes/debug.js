@@ -91,3 +91,42 @@ debugRouter.get("/api/debug/companyai/raw", async (_req, res) => {
     res.status(500).json({ error: String(e) });
   }
 });
+
+// Dumps the raw collection list, per-collection points_count, and (best
+// effort) /telemetry — gated on the same QDRANT_URL/QDRANT_API_KEY env vars
+// the real connector needs, same as every other route in this file.
+debugRouter.get("/api/debug/qdrant/collections", async (_req, res) => {
+  if (!process.env.QDRANT_URL || !process.env.QDRANT_API_KEY) {
+    return res.status(400).json({ error: "QDRANT_URL / QDRANT_API_KEY not set" });
+  }
+  try {
+    const headers = { "api-key": process.env.QDRANT_API_KEY };
+    const listRes = await fetchWithTimeout(`${process.env.QDRANT_URL}/collections`, { headers });
+    const listJson = await listRes.json();
+    const names = (listJson?.result?.collections ?? []).map((c) => c.name).filter(Boolean);
+
+    const [collections, telemetry] = await Promise.all([
+      Promise.all(
+        names.map(async (name) => {
+          try {
+            const r = await fetchWithTimeout(`${process.env.QDRANT_URL}/collections/${encodeURIComponent(name)}`, { headers });
+            return { name, status: r.status, body: await r.json() };
+          } catch (e) {
+            return { name, status: null, error: String(e) };
+          }
+        })
+      ),
+      fetchWithTimeout(`${process.env.QDRANT_URL}/telemetry`, { headers })
+        .then(async (r) => ({ status: r.status, body: r.ok ? await r.json() : await r.text() }))
+        .catch((e) => ({ status: null, error: String(e) })),
+    ]);
+
+    res.json({
+      collectionsList: { status: listRes.status, body: listJson },
+      collections,
+      telemetry,
+    });
+  } catch (e) {
+    res.status(500).json({ error: String(e) });
+  }
+});

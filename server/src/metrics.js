@@ -124,8 +124,14 @@ export function buildReport(results) {
       metrics: [
         { label: "Meetings ingested", source: "fireflies", value: pick(ff, ["data.transcripts.length"]) },
         { label: "Transcripts", source: "fireflies", value: pick(ff, ["data.transcripts.length"]) },
-        { label: "Knowledge records", source: "qdrant", value: pick(qd, ["points_count", "vectors_count"]) },
-        { label: "Slack messages idx", source: "qdrant", value: pick(qd, ["slack_messages_indexed"]) },
+        {
+          label: "Knowledge records", source: "qdrant", value: pick(qd, ["companyPointsCount"]),
+          note: qd && qd.companyPointsCount == null ? "\"Company\" collection not found in Qdrant — confirm the name with Shawn" : null,
+        },
+        {
+          label: "Slack messages idx", source: "qdrant", value: pick(qd, ["slackMessagesIndexed"]),
+          note: qd && qd.slackMessagesIndexed == null ? "No Slack-named collection found in Qdrant yet" : null,
+        },
         { label: "New data sources", source: "qdrant", value: pick(qd, ["new_sources"]) },
       ],
     },
@@ -203,7 +209,7 @@ export function buildReport(results) {
     {
       name: "AI Infrastructure Growth",
       metrics: [
-        { label: "Qdrant records", source: "qdrant", value: pick(qd, ["points_count", "vectors_count"]) },
+        { label: "Qdrant records", source: "qdrant", value: pick(qd, ["totalPointsCount"]) },
         { label: "Active AI skills", source: "cicd", value: pick(ci, ["active_skills"]) },
         { label: "Internal agents", source: "cicd", value: pick(ci, ["internal_agents"]) },
         { label: "Protected MCP endpts", source: "cicd", value: pick(ci, ["protected_mcp_endpoints"]) },
