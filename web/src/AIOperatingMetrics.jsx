@@ -36,6 +36,8 @@ const TOKENS = {
     errorBg: "rgba(224,91,91,0.08)",
     fallback: "#B18AF0",
     fallbackBg: "rgba(177,138,240,0.10)",
+    na: "#8A93A6",
+    naBg: "rgba(138,147,166,0.08)",
     accent: "#5B8DEF",
   },
   // "Soft Slate" — winner of a 3-way judge-panel design review (2026-07-10),
@@ -62,6 +64,8 @@ const TOKENS = {
     errorBg: "rgba(163,54,47,0.08)",
     fallback: "#6748AE",
     fallbackBg: "rgba(103,72,174,0.09)",
+    na: "#5F5648",
+    naBg: "rgba(95,86,72,0.08)",
     accent: "#2D54BC",
   },
 };
@@ -76,6 +80,7 @@ function statusMeta(T, status) {
   if (status === "error") return { dot: T.error, bg: T.errorBg, text: "ERROR" };
   if (status === "fallback") return { dot: T.fallback, bg: T.fallbackBg, text: "AI FALLBACK" };
   if (status === "degraded") return { dot: T.error, bg: T.errorBg, text: "DEGRADED" };
+  if (status === "unavailable") return { dot: T.na, bg: T.naBg, text: "N/A" };
   return { dot: T.inkFaint, bg: "transparent", text: "MOCK" };
 }
 
@@ -149,7 +154,7 @@ function NorthStarCard({ T, m, src }) {
         <span style={{ width: 6, height: 6, borderRadius: 99, background: meta.dot }} />
         <span style={{ fontFamily: FONTS.mono, fontSize: 10, color: T.inkFaint }}>{src?.label ?? m.source}</span>
       </div>
-      {m.note && <div style={{ fontSize: 10.5, color: T.pending, marginTop: 6 }}>{m.note}</div>}
+      {m.note && <div style={{ fontSize: 10.5, color: m.state === "unavailable" ? T.na : T.pending, marginTop: 6 }}>{m.note}</div>}
       {open && (
         <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${T.panelEdge}` }}>
           {history === null && <span style={{ fontSize: 10.5, color: T.inkFaint }}>Loading history…</span>}
@@ -167,16 +172,21 @@ function MetricRow({ T, m, src }) {
   const meta = statusMeta(T, src?.status ?? "mock");
   const empty = m.value === null || m.value === undefined;
   const isFallback = src?.status === "fallback";
+  const isUnavailable = m.state === "unavailable";
   return (
     <div style={{
       display: "flex", alignItems: "center", justifyContent: "space-between",
       padding: "10px 14px", borderTop: `1px solid ${T.panelEdge}`,
       opacity: empty && src?.status === "pending" ? 0.72 : 1,
-      background: isFallback ? T.fallbackBg : "transparent",
+      background: isFallback ? T.fallbackBg : isUnavailable ? T.naBg : "transparent",
     }}>
       <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
         <span style={{ color: T.ink, fontSize: 13.5 }}>{m.label}</span>
-        {m.note && <span style={{ color: isFallback ? T.fallback : T.inkFaint, fontSize: 11 }}>{m.note}</span>}
+        {m.note && (
+          <span style={{ color: isFallback ? T.fallback : isUnavailable ? T.na : T.inkFaint, fontSize: 11 }}>
+            {isUnavailable ? `n/a — ${m.note}` : m.note}
+          </span>
+        )}
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
         {isFallback && (
@@ -185,6 +195,14 @@ function MetricRow({ T, m, src }) {
             borderRadius: 4, padding: "1px 4px", letterSpacing: 0.5,
           }}>
             AI EST.
+          </span>
+        )}
+        {isUnavailable && (
+          <span title={`n/a — not exposed by source. ${m.note ?? ""}`} style={{
+            fontFamily: FONTS.mono, fontSize: 9, color: T.na, border: `1px solid ${T.na}`,
+            borderRadius: 4, padding: "1px 4px", letterSpacing: 0.5, cursor: "help",
+          }}>
+            N/A
           </span>
         )}
         <span style={{
@@ -296,11 +314,23 @@ export default function AIOperatingMetrics() {
       else if (s === "degraded") degraded++;
       else pending++;
     });
-    return { live, pending, error, fallback, degraded, total: Object.keys(sourcesMeta).length };
-  }, [sourcesMeta, sources]);
+    // Unavailable is a per-METRIC tag (source live, field not exposed), not a
+    // source status — counted separately from the source tallies above.
+    const allMetrics = [...report.northStar, ...report.categories.flatMap((c) => c.metrics)];
+    const unavailable = allMetrics.filter((m) => m.state === "unavailable").length;
+    return { live, pending, error, fallback, degraded, unavailable, total: Object.keys(sourcesMeta).length };
+  }, [sourcesMeta, sources, report]);
 
-  const showCat = (metrics) => filter === "all" || metrics.some((m) => sourceOf(m.source).status === filter);
-  const showMetric = (m) => filter === "all" || sourceOf(m.source).status === filter;
+  // "unavailable" filters on the metric's own state, not its source's status
+  // (the source is "live" — that's the whole point) — every other filter
+  // value still matches on source status.
+  const matchesFilter = (m) => {
+    if (filter === "all") return true;
+    if (filter === "unavailable") return m.state === "unavailable";
+    return sourceOf(m.source).status === filter;
+  };
+  const showCat = (metrics) => filter === "all" || metrics.some(matchesFilter);
+  const showMetric = (m) => matchesFilter(m);
 
   async function takeSnapshot() {
     setSnapshotMsg("Saving snapshot…");
@@ -353,8 +383,8 @@ export default function AIOperatingMetrics() {
           {isLive ? (
             <>One roll-up across every AI system. Each metric shows its source status — green is live data,
             amber is a source still being wired in, red is a configured source whose fetch failed, purple
-            ("AI EST.") is a temporary AI-guessed number standing in until a direct connector lands.
-            Hover any dot to see why.</>
+            ("AI EST.") is a temporary AI-guessed number standing in until a direct connector lands, and grey
+            ("N/A") marks a field a live source simply doesn't expose. Hover any dot to see why.</>
           ) : (
             <>Viewing a cached snapshot for {payload.month} — status dots reflect each source's state at
             capture time, not right now. Switch back to "{currentMonth()} · Live" for month-to-date data.</>
@@ -370,6 +400,7 @@ export default function AIOperatingMetrics() {
             { k: "fallback", label: `Fallback · ${counts.fallback}`, dot: T.fallback },
             { k: "error", label: `Error · ${counts.error}`, dot: T.error },
             { k: "degraded", label: `Degraded · ${counts.degraded}`, dot: T.error },
+            { k: "unavailable", label: `N/A · ${counts.unavailable}`, dot: T.na },
           ].map((b) => (
             <button key={b.k} onClick={() => setFilter(b.k)} style={{
               display: "flex", alignItems: "center", gap: 8, cursor: "pointer",

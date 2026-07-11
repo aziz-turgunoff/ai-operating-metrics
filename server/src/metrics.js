@@ -28,6 +28,22 @@ function sumJobsByTrade(apolloData) {
   return sumTradeCounts(apolloData?.jobsByTrade);
 }
 
+// A metric is "unavailable" (source connected, field just isn't exposed) —
+// distinct from "pending" (source not connected yet). Only applies when the
+// metric's OWN source is genuinely "live": a metric whose value falls back to
+// null while its source is "pending"/"error"/"fallback" stays plain null,
+// since the real reason there is "not connected," not "connected but empty."
+// Never overrides an existing `state` — none set one as of writing, but this
+// keeps a future explicit tag from being clobbered.
+function tagAvailability(metric, results) {
+  if (metric.state) return metric;
+  const isEmpty = metric.value === null || metric.value === undefined;
+  if (results[metric.source]?.status === "live" && isEmpty && metric.note) {
+    return { ...metric, state: "unavailable" };
+  }
+  return metric;
+}
+
 // Source B (direct LeadBank/Apollo) wins whenever it's live. Source C
 // (companyai) only fills in when B is exactly "pending" — never when B is
 // "error", since a broken direct integration is a signal to fix, not paper
@@ -218,5 +234,11 @@ export function buildReport(results) {
     },
   ];
 
-  return { northStar, categories };
+  return {
+    northStar: northStar.map((m) => tagAvailability(m, results)),
+    categories: categories.map((cat) => ({
+      ...cat,
+      metrics: cat.metrics.map((m) => tagAvailability(m, results)),
+    })),
+  };
 }
