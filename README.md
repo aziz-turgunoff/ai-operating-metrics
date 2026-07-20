@@ -43,8 +43,8 @@ Open http://localhost:5173 — Vite proxies `/api/*` to the server.
 | Open WebUI gateway | live-capable | needs `OPENWEBUI_URL`/`OPENWEBUI_TOKEN` | Shawn |
 | LeadBank BI | live-capable | date-filter bug — use `LEADBANK_DAYS` (bigint error on start/end_date) | XTR/BI (escalate via Carlos) |
 | Apollo ERP | live-capable | raw revenue endpoint down (`NodeApiError`) | IT/R&D (Carlos/XTR) |
-| Qdrant | pending | whitelist from XTR/Dmitrii — check today | Shawn |
-| Fireflies | pending | confirm as source of truth vs Qdrant "Company" collection — check today | Shawn |
+| Qdrant | live | none — whitelist cleared 2026-07-21, `company` collection confirmed (lowercase) | Shawn |
+| Fireflies | pending | confirmed: no separate meetings/Slack collection in Qdrant; data lives inside `company` | Shawn |
 | CI/CD | pending | scope TBD across Drone/Vercel/Lovable/AWS; token comes via Engineering Squad admin panel | Sergey/Aleksandr |
 | n8n / Zapier | pending | no API yet | XTR |
 | Derived (Hours Saved / Cost Savings) | half-locked | rate locked at **$20/hr** (Jay, 2026-07-08); minutes-saved-per-task still needs sign-off | Sardor/Jay |

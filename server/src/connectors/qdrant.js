@@ -1,14 +1,17 @@
 // Knowledge base growth: record counts, collections.
-// Was blocked on a whitelist from XTR/Dmitrii — check QDRANT_URL/QDRANT_API_KEY
-// before assuming this is still pending. Whitelist requested 2026-07-11 for
-// static IP 4.227.180.184, pending Sergey; QDRANT_API_KEY is an admin key
-// from Shawn (full access) — .env only, never commit.
+// Whitelist cleared 2026-07-21 — dashboard + API access confirmed. Note the
+// whitelist was granted for the requester's static IP; if this errors in
+// Vercel prod but works locally, Vercel's egress IP likely isn't whitelisted
+// yet — flag to Sergey rather than assuming the connector is broken.
+// QDRANT_API_KEY is an admin key from Shawn (full access) — .env only, never commit.
 //
-// "Company" collection (confirmed by Shawn) holds Fireflies transcripts +
-// company knowledge — its points_count is the primary "Knowledge records"
-// metric (Company Intelligence). "Qdrant records" (AI Infrastructure Growth)
-// is the SUM of points_count across every collection — a different, larger
-// number; don't conflate the two (see metrics.js).
+// "company" collection (lowercase, confirmed live 2026-07-21) holds company
+// knowledge — its points_count is the primary "Knowledge records" metric
+// (Company Intelligence). "Qdrant records" (AI Infrastructure Growth) is the
+// SUM of points_count across every collection — a different, larger number;
+// don't conflate the two (see metrics.js). Live instance has 4 collections:
+// company, passport, sardor, test — no separate slack/meetings collection
+// exists; that data lives inside "company", not standalone.
 //
 // "Slack messages idx" resolves from a collection whose name looks
 // slack-related, if one exists — never guessed from an unrelated collection.
@@ -26,7 +29,7 @@ import { num, pick } from "../lib/normalize.js";
 export const QDRANT_HISTORY_NOTE =
   "Point-in-time count; month-over-month accrues via monthly snapshots (Grafana/Prometheus history pending via XTR).";
 
-const COMPANY_COLLECTION = "Company";
+const COMPANY_COLLECTION = "company";
 const SLACK_NAME_HINTS = ["slack"];
 const MEETINGS_NAME_HINTS = ["meeting", "fireflies", "transcript"];
 
