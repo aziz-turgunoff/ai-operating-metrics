@@ -11,6 +11,7 @@ import { historyRouter } from "./routes/history.js";
 import { monthsRouter } from "./routes/months.js";
 import { debugRouter } from "./routes/debug.js";
 import { cronRouter } from "./routes/cron.js";
+import { qdrantPushRouter } from "./routes/qdrantPush.js";
 
 export const app = express();
 app.use(cors());
@@ -22,5 +23,6 @@ app.use(historyRouter);
 app.use(monthsRouter);
 app.use(debugRouter);
 app.use(cronRouter);
+app.use(qdrantPushRouter);
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));

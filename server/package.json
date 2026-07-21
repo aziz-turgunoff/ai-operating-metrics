@@ -8,7 +8,8 @@
     "start": "node src/index.js",
     "db:migrate": "prisma migrate dev",
     "db:generate": "prisma generate",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "push:qdrant": "node scripts/pushQdrantCache.js"
   },
   "dependencies": {
     "@prisma/client": "^6.1.0",

@@ -50,3 +50,16 @@ model MetricValue {
 
   @@index([metricKey, snapshotId])
 }
+
+// Last-known-good payload for a source that can't be fetched live from
+// Vercel's serverless egress (e.g. Qdrant, whose IP whitelist only covers a
+// single static IP, not Vercel's rotating pool). A connector falls back to
+// its cached row here when the direct fetch fails; POST /api/push/<source>
+// is how a VPN-connected local machine keeps it fresh. See
+// connectors/qdrant.js and scripts/pushQdrantCache.js.
+model SourceCache {
+  id         Int      @id @default(autoincrement())
+  sourceKey  String   @unique
+  data       String // JSON.stringify of the connector's `data` field
+  updatedAt  DateTime @updatedAt
+}
