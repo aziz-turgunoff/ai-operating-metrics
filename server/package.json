@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "postinstall": "prisma generate",
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
     "db:migrate": "prisma migrate dev",

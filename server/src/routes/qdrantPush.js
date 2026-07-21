@@ -21,10 +21,18 @@ qdrantPushRouter.post("/api/push/qdrant", async (req, res) => {
     return res.status(400).json({ error: "expected { collections: [...], companyPointsCount, slackMessagesIndexed, meetingsIngested, totalPointsCount }" });
   }
   const data = { collections, companyPointsCount, slackMessagesIndexed, meetingsIngested, totalPointsCount };
-  const row = await prisma.sourceCache.upsert({
-    where: { sourceKey: CACHE_KEY },
-    create: { sourceKey: CACHE_KEY, data: JSON.stringify(data) },
-    update: { data: JSON.stringify(data) },
-  });
-  res.json({ ok: true, updatedAt: row.updatedAt });
+  try {
+    const row = await prisma.sourceCache.upsert({
+      where: { sourceKey: CACHE_KEY },
+      create: { sourceKey: CACHE_KEY, data: JSON.stringify(data) },
+      update: { data: JSON.stringify(data) },
+    });
+    res.json({ ok: true, updatedAt: row.updatedAt });
+  } catch (e) {
+    // Without this, an unhandled rejection here (e.g. a stale Prisma Client
+    // missing this model after a cached Vercel build skipped `prisma
+    // generate`) leaves the request hanging with no response until Vercel's
+    // function timeout — a 504 with zero diagnostic info. Surface it instead.
+    res.status(500).json({ ok: false, error: String(e) });
+  }
 });
